@@ -9,6 +9,11 @@ namespace VeeamTestArchiver
     {
         static void Main(string[] args)
         {
+            // TODO: Проверять, что разные файлы.
+            var gzipCompressor = new GZipCompressor("test.mkv");
+
+            gzipCompressor.Compress("testOut.gz");
+
         }
     }
 }

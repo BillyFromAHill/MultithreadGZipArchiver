@@ -39,7 +39,11 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CompressedChunksProvider.cs" />
+    <Compile Include="CompressionBlock.cs" />
     <Compile Include="GZipCompressor.cs" />
+    <Compile Include="InitialBlocksProvider.cs" />
+    <Compile Include="MultiThreadGZipStream.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
