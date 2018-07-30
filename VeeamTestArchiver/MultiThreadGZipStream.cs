@@ -23,14 +23,23 @@ namespace VeeamTestArchiver
         private Thread[] _threads;
         private Dictionary<int, CompressionBlock> _blocks = new Dictionary<int, CompressionBlock>();
 
+        private CompressedBlocksProvider _compressedProvider;
+
         public MultiThreadGZipStream(
             Stream inputStream,
             CompressionMode compressionMode,
             int bufferSize)
         {
+            if (inputStream == null)
+            {
+                throw new ArgumentNullException("inputStream");
+            }
+
             _bufferSize = bufferSize;
             _inputStream = inputStream;
             _compressionMode = compressionMode;
+
+            _compressedProvider = new CompressedBlocksProvider(_inputStream);
         }
 
         public void CopyTo(Stream destStream)
@@ -56,29 +65,63 @@ namespace VeeamTestArchiver
                     break;
                 }
 
-                using (var memoryStream = new MemoryStream(_bufferSize))
-                {
-                    using (var gzipStream = new GZipStream(memoryStream, _compressionMode))
-                    {
-                        gzipStream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
-                    }
 
-                    WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()), stream as Stream);
+                if (_compressionMode == CompressionMode.Compress)
+                {
+                    using (var memoryStream = new MemoryStream(_bufferSize))
+                    {
+                        using (var gzipStream = new GZipStream(memoryStream, _compressionMode))
+                        {
+                            gzipStream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
+                        }
+
+                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()), stream as Stream);
+                    }
+                }
+                else
+                {
+                    using (var memoryStream = new MemoryStream(_bufferSize))
+                    {
+                        using (var gzipStream = new GZipStream(
+                            new MemoryStream(currentBlock.Data),
+                            _compressionMode))
+                        {
+                            byte[] decompressedData = new byte[_bufferSize];
+
+                            int nRead;
+                            while ((nRead = gzipStream.Read(decompressedData, 0, decompressedData.Length)) > 0)
+                            {
+                                memoryStream.Write(decompressedData, 0, nRead);
+                            }
+                        }
+
+                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()), stream as Stream);
+                    }
                 }
             }
         }
 
         private CompressionBlock ReadBlock()
         {
-            var block = new byte[_bufferSize];
-            int count = 0;
-            lock (_readLock)
+            if (_compressionMode == CompressionMode.Compress)
             {
-                count = _inputStream.Read(block, 0, _bufferSize);
-                if (count > 0)
+                var block = new byte[_bufferSize];
+                int count = 0;
+                lock (_readLock)
                 {
-                    _currentReadBlock++;
-                    return new CompressionBlock(_currentReadBlock, block, count);
+                    count = _inputStream.Read(block, 0, _bufferSize);
+                    if (count > 0)
+                    {
+                        _currentReadBlock++;
+                        return new CompressionBlock(_currentReadBlock, block, count);
+                    }
+                }
+            }
+            else
+            {
+                lock (_readLock)
+                {
+                    return _compressedProvider.GetNextBlock();
                 }
             }
 

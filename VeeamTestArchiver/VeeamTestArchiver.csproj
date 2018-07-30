@@ -39,7 +39,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="CompressedChunksProvider.cs" />
+    <Compile Include="CompressedBlocksProvider.cs" />
     <Compile Include="CompressionBlock.cs" />
     <Compile Include="GZipCompressor.cs" />
     <Compile Include="InitialBlocksProvider.cs" />

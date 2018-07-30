@@ -15,7 +15,6 @@ namespace VeeamTestArchiver
         {
             byte[] buf = new byte[1024 * 1024];
 
-
             Stopwatch watcher = new Stopwatch();
 
             watcher.Start();
@@ -25,8 +24,6 @@ namespace VeeamTestArchiver
                 {
                     stream.Read(buf, 0, 1024 * 1024);
                 }
-
-                buf[20] = 0;
             }
 
             watcher.Stop();

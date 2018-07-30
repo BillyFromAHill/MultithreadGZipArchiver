@@ -33,21 +33,17 @@ namespace VeeamTestArchiver
                     _blockSizeBytes);
 
             stream.CopyTo(File.Create(destinationPath));
-
-
-/*            using (var fileStream = File.OpenWrite("test.gz"))
-            {
-                using (var gzipStream = new GZipStream(fileStream, CompressionMode.Compress))
-                {
-                    byte[] bytes = File.ReadAllBytes("test.mkv");
-                    gzipStream.Write(File.ReadAllBytes("test.mkv"), 0, bytes.Length);
-                }
-            }*/
         }
 
         public void Decompress(string destinationPath)
         {
+            MultiThreadGZipStream stream =
+                new MultiThreadGZipStream(
+                    File.OpenRead(_sourceFileName),
+                    CompressionMode.Decompress,
+                    _blockSizeBytes);
 
+            stream.CopyTo(File.Create(destinationPath));
         }
     }
 }
