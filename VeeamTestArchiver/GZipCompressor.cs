@@ -9,11 +9,9 @@ namespace VeeamTestArchiver
 {
     public class GZipCompressor
     {
-        private int _blockSizeBytes;
-
         private string _sourceFileName;
 
-        public GZipCompressor(string filename, int blockSize = 1024 * 1024)
+        public GZipCompressor(string filename)
         {
             if (string.IsNullOrEmpty(filename))
             {
@@ -21,7 +19,6 @@ namespace VeeamTestArchiver
             }
 
             _sourceFileName = filename;
-            _blockSizeBytes = blockSize;
         }
 
         public void Compress(string destinationPath)
@@ -29,8 +26,7 @@ namespace VeeamTestArchiver
             MultiThreadGZipStream stream =
                 new MultiThreadGZipStream(
                     File.OpenRead(_sourceFileName),
-                    CompressionMode.Compress,
-                    _blockSizeBytes);
+                    CompressionMode.Compress);
 
             stream.CopyTo(File.Create(destinationPath));
         }
@@ -40,8 +36,7 @@ namespace VeeamTestArchiver
             MultiThreadGZipStream stream =
                 new MultiThreadGZipStream(
                     File.OpenRead(_sourceFileName),
-                    CompressionMode.Decompress,
-                    _blockSizeBytes);
+                    CompressionMode.Decompress);
 
             stream.CopyTo(File.Create(destinationPath));
         }

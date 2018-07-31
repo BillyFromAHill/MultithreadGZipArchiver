@@ -10,36 +10,43 @@ namespace VeeamTestArchiver
 {
     public class MultiThreadGZipStream : IDisposable
     {
+        // Заименовано как Stream,
+        // поскольку может без особых доработок может реализовывать полноценный поток,
+        // что изначально задумывалось.
         private Stream _inputStream;
 
-        private int _bufferSize;
+        private int _bufferSize = 1024;
         private bool _disposedValue;
         private int _currentProcessedBlock = -1;
-        private int _currentReadBlock = -1; 
+
 
         private CompressionMode _compressionMode;
 
-        private Object _readLock = new Object();
         private Thread[] _threads;
         private Dictionary<int, CompressionBlock> _blocks = new Dictionary<int, CompressionBlock>();
 
-        private CompressedBlocksProvider _compressedProvider;
+        private IBlocksProvider _blocksProvider;
 
         public MultiThreadGZipStream(
             Stream inputStream,
-            CompressionMode compressionMode,
-            int bufferSize)
+            CompressionMode compressionMode)
         {
             if (inputStream == null)
             {
                 throw new ArgumentNullException("inputStream");
             }
 
-            _bufferSize = bufferSize;
             _inputStream = inputStream;
             _compressionMode = compressionMode;
 
-            _compressedProvider = new CompressedBlocksProvider(_inputStream);
+            if (compressionMode == CompressionMode.Compress)
+            {
+                _blocksProvider = new InitialBlocksProvider(_inputStream);
+            }
+            else
+            {
+               _blocksProvider = new CompressedBlocksProvider(_inputStream);
+            }
         }
 
         public void CopyTo(Stream destStream)
@@ -58,13 +65,12 @@ namespace VeeamTestArchiver
         {
             while (true)
             {
-                CompressionBlock currentBlock = ReadBlock();
+                CompressionBlock currentBlock = _blocksProvider.GetNextBlock();
 
                 if (currentBlock == null)
                 {
                     break;
                 }
-
 
                 if (_compressionMode == CompressionMode.Compress)
                 {
@@ -99,33 +105,6 @@ namespace VeeamTestArchiver
                     }
                 }
             }
-        }
-
-        private CompressionBlock ReadBlock()
-        {
-            if (_compressionMode == CompressionMode.Compress)
-            {
-                var block = new byte[_bufferSize];
-                int count = 0;
-                lock (_readLock)
-                {
-                    count = _inputStream.Read(block, 0, _bufferSize);
-                    if (count > 0)
-                    {
-                        _currentReadBlock++;
-                        return new CompressionBlock(_currentReadBlock, block, count);
-                    }
-                }
-            }
-            else
-            {
-                lock (_readLock)
-                {
-                    return _compressedProvider.GetNextBlock();
-                }
-            }
-
-            return null;
         }
 
         protected virtual void Dispose(bool disposing)

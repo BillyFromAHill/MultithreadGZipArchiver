@@ -7,10 +7,10 @@ using System.Text;
 
 namespace VeeamTestArchiver
 {
-    internal class CompressedBlocksProvider
+    internal class CompressedBlocksProvider : IBlocksProvider
     {
         // Чтение выделено в объекты, поскольку внутри может быть реализовано чтение файла в несколько потоков,
-        // что для RAID может дать прирост скорости.
+        // что для RAID, например, может дать прирост скорости.
         // Для чтения сжатых блоков выбран вариант вычитывания до идентификатора gzip.
         // Переупаковка блока, с дополнением в виде размера блока в заголовке, дала бы более быстрое чтение, но
         // проявилось бы это только при чтении упакованного этой же утилитой файла и необходимость
@@ -21,25 +21,26 @@ namespace VeeamTestArchiver
 
         private int _currentBlockIndex = -1;
 
-        private const int InternalBufferSize = 1024;
+        private  int _internalBufferSize = 1024 * 1024;
 
-        private byte[] _lastInternalBlock = null;
-
-        private int _lastBlockSize = 0;
+        private byte[] _currentInternalBlock = null;
+        private int _currentBlockRead = 0;
 
         // Байты ID используются как разделитель.
-        private int _lastInternalBlockPosition = 2;
+        private int _currentInternalBlockPosition = 3;
 
         private const byte GZipId1 = 0x1f;
         private const byte GZipId2 = 0x8b;
+        private const byte GZipDeflate = 0x08;
 
-        public CompressedBlocksProvider(Stream gzippedStream)
+        public CompressedBlocksProvider(Stream gzippedStream, int internalBufferSize = 1024 * 1024)
         {
             if (gzippedStream == null)
             {
                 throw new ArgumentNullException("gzippedStream");
             }
 
+            _internalBufferSize = internalBufferSize;
             _gzippedStream = gzippedStream;
         }
 
@@ -47,21 +48,18 @@ namespace VeeamTestArchiver
         {
             lock (_streamLock)
             {
-                byte[] currentBlock = _lastInternalBlock;
-                int count = _lastBlockSize;
-
-                if (currentBlock == null)
+                if (_currentInternalBlock == null)
                 {
-                    currentBlock = new byte[InternalBufferSize];
+                    _currentInternalBlock = new byte[_internalBufferSize];
 
-                    count = _gzippedStream.Read(currentBlock, 0, InternalBufferSize);
+                    _currentBlockRead = _gzippedStream.Read(_currentInternalBlock, 0, _internalBufferSize);
 
-                    if (count == 0)
+                    if (_currentBlockRead == 0)
                     {
                         return null;
                     }
 
-                    if (count > 2 && (currentBlock[0] != GZipId1 || currentBlock[1] != GZipId2))
+                    if (_currentBlockRead > 2 && (_currentInternalBlock[0] != GZipId1 || _currentInternalBlock[1] != GZipId2))
                     {
                         throw new MissingFieldException("Ids are not found.");
                     }
@@ -70,68 +68,83 @@ namespace VeeamTestArchiver
                 _currentBlockIndex++;
                 bool firstFound = false;
                 bool secondFound = false;
+                bool thirdFound = false;
+
 
                 // Сжатый блок может быть, любого размера, в том числе, больше исходного.
                 var blocks = new List<byte[]>();
 
-                int blockStart = _lastInternalBlockPosition;
+                int firstBlockStart = _currentInternalBlockPosition;
+                int currentBlockStart = _currentInternalBlockPosition;
+                int lastBlockRead = _currentBlockRead;
+                byte[] currentBlock = _currentInternalBlock;
 
                 do
                 {
-                    int currentBlockStart = _lastInternalBlockPosition;
-                    blocks.Add(currentBlock);
-                    for (int i = currentBlockStart; i < count; i++)
+                    _currentBlockRead = lastBlockRead;
+                    _currentInternalBlock = currentBlock;
+                    blocks.Add(_currentInternalBlock);
+                    for (int i = currentBlockStart; i < _currentBlockRead; i++)
                     {
-                        if (firstFound && currentBlock[i] == GZipId2)
+                        if (secondFound && _currentInternalBlock[i] == GZipDeflate)
                         {
-                            secondFound = true;
-                            _lastInternalBlockPosition = i + 1;
+                            thirdFound = true;
+                            _currentInternalBlockPosition = i + 1;
                             break;
                         }
 
-                        firstFound = currentBlock[i] == GZipId1;
+                        secondFound = firstFound && _currentInternalBlock[i] == GZipId2;
+                        firstFound = _currentInternalBlock[i] == GZipId1;
                     }
 
-                    if (firstFound && secondFound)
+                    if (thirdFound)
                     {
                         break;
                     }
 
                     currentBlockStart = 0;
-                    _lastBlockSize = count;
-                    currentBlock = new byte[InternalBufferSize];
-                    count = _gzippedStream.Read(currentBlock, 0, InternalBufferSize);
+                    currentBlock = new byte[_internalBufferSize];
+                    lastBlockRead = _gzippedStream.Read(currentBlock, 0, _internalBufferSize);
                 }
-                while (count > 0);
+                while (lastBlockRead > 0);
 
-                if (firstFound && secondFound)
+                if (!thirdFound)
                 {
-                    _lastBlockSize = _lastInternalBlockPosition - 2;
-                }
-                else
-                {
-                    _lastInternalBlockPosition = count;
+                    _currentInternalBlockPosition = _currentBlockRead + 2;
                 }
 
-                long resultBlockSize = (blocks.Count - 1) * InternalBufferSize + _lastBlockSize + 2 - blockStart;
+                if (_currentInternalBlockPosition == firstBlockStart)
+                {
+                    return null;
+                }
+
+                long resultBlockSize =
+                    (blocks.Count - 1) * _internalBufferSize + _currentInternalBlockPosition - firstBlockStart;
 
                 byte[] resultBuffer = new byte[resultBlockSize];
                 int blockIndex = 0;
-                long placePosition = 2;
+                long placePosition = 3;
                 foreach (var block in blocks)
                 {
-                    long bytesToCopy = InternalBufferSize;
+                    long bytesToCopy = _internalBufferSize;
                     long copyStart = 0;
 
                     if (blockIndex == 0)
                     {
-                        copyStart = blockStart;
-                        bytesToCopy = InternalBufferSize - copyStart;
+                        copyStart = firstBlockStart;
+                        bytesToCopy = _internalBufferSize - copyStart;
                     }
 
                     if (blockIndex == blocks.Count - 1)
                     {
-                        bytesToCopy = _lastBlockSize - 2;
+                        if (blocks.Count == 1)
+                        {
+                            bytesToCopy = _currentInternalBlockPosition - 3 - firstBlockStart;
+                        }
+                        else
+                        {
+                            bytesToCopy = _currentInternalBlockPosition - 3;
+                        }
                     }
 
                     Array.Copy(
@@ -148,6 +161,7 @@ namespace VeeamTestArchiver
 
                 resultBuffer[0] = GZipId1;
                 resultBuffer[1] = GZipId2;
+                resultBuffer[2] = GZipDeflate;
 
                 return new CompressionBlock(_currentBlockIndex, resultBuffer);
             }
