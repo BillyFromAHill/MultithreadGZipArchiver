@@ -22,7 +22,19 @@ namespace VeeamTestArchiver
 
         private CompressionMode _compressionMode;
 
-        private Thread[] _threads;
+        private int _blockCacheSize = Environment.ProcessorCount * 2;
+
+        private Queue<CompressionBlock> _readBlocks = new Queue<CompressionBlock>();
+        private Queue<CompressionBlock> _blocksToWrite = new Queue<CompressionBlock>();
+
+        private AutoResetEvent _fullEvent = new AutoResetEvent(false);
+        private AutoResetEvent _getDataEvent = new AutoResetEvent(false);
+
+
+        private Thread _readerThread;
+        private Thread[] _compressionThreads;
+        private Thread _writerThread;
+
         private Dictionary<int, CompressionBlock> _blocks = new Dictionary<int, CompressionBlock>();
 
         private IBlocksProvider _blocksProvider;
@@ -45,7 +57,7 @@ namespace VeeamTestArchiver
             }
             else
             {
-               _blocksProvider = new CompressedBlocksProvider(_inputStream);
+                _blocksProvider = new CompressedBlocksProvider(_inputStream);
             }
         }
 
@@ -53,12 +65,18 @@ namespace VeeamTestArchiver
         {
             _currentProcessedBlock = -1;
 
-            _threads = new Thread[Environment.ProcessorCount];
-            for (int i = 0; i < _threads.Length; i++)
+            _readerThread = new Thread(new ParameterizedThreadStart(ReaderWorker));
+            _readerThread.Start(_inputStream);
+
+            _compressionThreads = new Thread[Environment.ProcessorCount];
+            for (int i = 0; i < _compressionThreads.Length; i++)
             {
-                _threads[i] = new Thread(new ParameterizedThreadStart(CompressionWorker));
-                _threads[i].Start(destStream);
+                _compressionThreads[i] = new Thread(new ParameterizedThreadStart(CompressionWorker));
+                _compressionThreads[i].Start();
             }
+
+            _writerThread = new Thread(new ParameterizedThreadStart(WriteWorker));
+            _writerThread.Start(destStream);
         }
 
         public double PercentsDone
@@ -73,19 +91,59 @@ namespace VeeamTestArchiver
         {
             get
             {
-                return _threads.All(t => !t.IsAlive);
+                return _compressionThreads.All(t => !t.IsAlive);
             }
         }
 
+        private void ReaderWorker(Object stream)
+        {
+            CompressionBlock block;
+            while ((block = _blocksProvider.GetNextBlock()) != null)
+            {
+                lock (_readBlocks)
+                {
+                    _readBlocks.Enqueue(block);
+                    _getDataEvent.Set();
+                }
+
+                if (_readBlocks.Count >= _blockCacheSize)
+                {
+                    _fullEvent.WaitOne();
+                }
+            }
+
+            _getDataEvent.Set();
+        }
+
+        private CompressionBlock ReadBlock()
+        {
+            if (_readBlocks.Count <= _blockCacheSize / 2)
+            {
+                _fullEvent.Set();
+            }
+
+            lock (_readBlocks)
+            {
+                if (_readBlocks.Any())
+                {
+                    return _readBlocks.Dequeue();
+                }
+            }
+
+            return null;
+        }
+
+
         private void CompressionWorker(Object stream)
         {
-            while (true)
+            while (_readerThread.IsAlive || _readBlocks.Count > 0)
             {
-                CompressionBlock currentBlock = _blocksProvider.GetNextBlock();
+                CompressionBlock currentBlock = ReadBlock();
 
                 if (currentBlock == null)
                 {
-                    break;
+                    _getDataEvent.WaitOne();
+                    continue;
                 }
 
                 if (_compressionMode == CompressionMode.Compress)
@@ -97,7 +155,7 @@ namespace VeeamTestArchiver
                             gzipStream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
                         }
 
-                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()), stream as Stream);
+                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
                     }
                 }
                 else
@@ -117,7 +175,7 @@ namespace VeeamTestArchiver
                             }
                         }
 
-                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()), stream as Stream);
+                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
                     }
                 }
             }
@@ -129,9 +187,9 @@ namespace VeeamTestArchiver
             {
                 if (disposing)
                 {
-                    if (_threads != null)
+                    if (_compressionThreads != null)
                     {
-                        foreach (var thread in _threads)
+                        foreach (var thread in _compressionThreads)
                         {
 
                         }
@@ -147,23 +205,35 @@ namespace VeeamTestArchiver
             Dispose(true);
         }
 
-        private void WriteBlock(CompressionBlock block, Stream stream)
-        {
-            if (block.BlockIndex - _currentProcessedBlock == 1)
-            {
-                stream.Write(block.Data, 0, block.EffectiveSize);
-                _currentProcessedBlock++;
-            }
-            else
-            {
-                lock (_blocks)
-                {
-                    _blocks.Add(block.BlockIndex, block);
-                }
-            }
 
-            lock (_blocks)
+        private void WriteWorker (Object streamObject)
+        {
+            Stream stream = streamObject as Stream;
+
+            while(_blocksToWrite.Count > 0 || _compressionThreads.Any(t => t.IsAlive))
             {
+                CompressionBlock block = null;
+                lock(_blocksToWrite)
+                {
+                    if (_blocksToWrite.Any())
+                    {
+                        block = _blocksToWrite.Dequeue();
+                    }
+                }
+
+                if (block != null)
+                {
+                    if (block.BlockIndex - _currentProcessedBlock == 1)
+                    {
+                        stream.Write(block.Data, 0, block.EffectiveSize);
+                        _currentProcessedBlock++;
+                    }
+                    else
+                    {
+                        _blocks.Add(block.BlockIndex, block);
+                    }
+                }
+
                 while (_blocks.ContainsKey(_currentProcessedBlock + 1))
                 {
                     CompressionBlock currentBlock = _blocks[_currentProcessedBlock + 1];
@@ -171,6 +241,19 @@ namespace VeeamTestArchiver
                     stream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
                     _currentProcessedBlock++;
                 }
+
+                if(block == null)
+                {
+                    Thread.Sleep(0);
+                }
+            }
+        }
+
+        private void WriteBlock(CompressionBlock block)
+        {
+            lock(_blocksToWrite)
+            {
+                _blocksToWrite.Enqueue(block);
             }
         }
     }
