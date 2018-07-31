@@ -21,7 +21,7 @@ namespace VeeamTestArchiver
             _sourceFileName = filename;
         }
 
-        public void Compress(string destinationPath)
+        public IArchiverStatistics Compress(string destinationPath)
         {
             MultiThreadGZipStream stream =
                 new MultiThreadGZipStream(
@@ -29,9 +29,11 @@ namespace VeeamTestArchiver
                     CompressionMode.Compress);
 
             stream.CopyTo(File.Create(destinationPath));
+
+            return stream;
         }
 
-        public void Decompress(string destinationPath)
+        public IArchiverStatistics Decompress(string destinationPath)
         {
             MultiThreadGZipStream stream =
                 new MultiThreadGZipStream(
@@ -39,6 +41,8 @@ namespace VeeamTestArchiver
                     CompressionMode.Decompress);
 
             stream.CopyTo(File.Create(destinationPath));
+
+            return stream;
         }
     }
 }

@@ -18,7 +18,7 @@ namespace VeeamTestArchiver
         private Stream _gzippedStream;
         private Object _streamLock = new Object();
 
-
+        private long _bytesProvided = 0;
         private int _currentBlockIndex = -1;
 
         private  int _internalBufferSize = 1024 * 1024;
@@ -32,6 +32,8 @@ namespace VeeamTestArchiver
         private const byte GZipId1 = 0x1f;
         private const byte GZipId2 = 0x8b;
         private const byte GZipDeflate = 0x08;
+
+
 
         public CompressedBlocksProvider(Stream gzippedStream, int internalBufferSize = 1024 * 1024)
         {
@@ -135,6 +137,7 @@ namespace VeeamTestArchiver
                         bytesToCopy = _internalBufferSize - copyStart;
                     }
 
+                    // Начало сжатого куска в одном внутреннем блоке, конец - в другом.
                     if (blockIndex == blocks.Count - 1)
                     {
                         if (blocks.Count == 1)
@@ -163,7 +166,25 @@ namespace VeeamTestArchiver
                 resultBuffer[1] = GZipId2;
                 resultBuffer[2] = GZipDeflate;
 
+                _bytesProvided += resultBuffer.Length;
                 return new CompressionBlock(_currentBlockIndex, resultBuffer);
+            }
+        }
+
+        public long TotalBytes
+        {
+            get
+            {
+                // Не для всех потоков вернет то, что нужно, но цели академические.
+                return _gzippedStream.Length;
+            }
+        }
+
+        public long BytesProvided
+        {
+            get
+            {
+                return _bytesProvided;
             }
         }
     }

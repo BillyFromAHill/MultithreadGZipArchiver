@@ -44,6 +44,7 @@
     <Compile Include="BlocksProviders\CompressionBlock.cs" />
     <Compile Include="GZipCompressor.cs" />
     <Compile Include="BlocksProviders\InitialBlocksProvider.cs" />
+    <Compile Include="IArchiverStatistics.cs" />
     <Compile Include="MultiThreadGZipStream.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

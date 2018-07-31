@@ -8,10 +8,10 @@ using System.Threading;
 
 namespace VeeamTestArchiver
 {
-    public class MultiThreadGZipStream : IDisposable
+    public class MultiThreadGZipStream : IDisposable, IArchiverStatistics
     {
         // Заименовано как Stream,
-        // поскольку может без особых доработок может реализовывать полноценный поток,
+        // поскольку без особых доработок может реализовывать полноценный поток,
         // что изначально задумывалось.
         private Stream _inputStream;
 
@@ -58,6 +58,22 @@ namespace VeeamTestArchiver
             {
                 _threads[i] = new Thread(new ParameterizedThreadStart(CompressionWorker));
                 _threads[i].Start(destStream);
+            }
+        }
+
+        public double PercentsDone
+        {
+            get
+            {
+                return _blocksProvider.BytesProvided / (double)_blocksProvider.TotalBytes * 100;
+            }
+        }
+
+        public bool IsDone
+        {
+            get
+            {
+                return _threads.All(t => !t.IsAlive);
             }
         }
 

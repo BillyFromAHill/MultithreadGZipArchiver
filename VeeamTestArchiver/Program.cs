@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 
 namespace VeeamTestArchiver
 {
@@ -80,13 +81,31 @@ namespace VeeamTestArchiver
 
             var gzipCompressor = new GZipCompressor(sourceFile);
 
+            IArchiverStatistics stat;
             if (command.Equals(CompressCommand))
             {
-                gzipCompressor.Compress(destFile);
+                stat = gzipCompressor.Compress(destFile);
             }
             else
             {
-                gzipCompressor.Decompress(destFile);
+                stat = gzipCompressor.Decompress(destFile);
+            }
+
+
+            while (!stat.IsDone)
+            {
+                UpdateProgress(stat);
+                Thread.Sleep(500);
+            }
+        }
+
+        private static void UpdateProgress(Object statictics)
+        {
+            IArchiverStatistics archiverStatistics = statictics as IArchiverStatistics;
+
+            if (archiverStatistics != null)
+            {
+                Console.Write("\r{0:F}%", archiverStatistics.PercentsDone);
             }
         }
     }

@@ -12,7 +12,7 @@ namespace VeeamTestArchiver
         private Stream _inputStream;
         private int _bufferSize;
         private int _currentReadBlock = -1;
-
+        private long _bytesProvided = 0;
         private Object _readLock = new Object();
 
         public InitialBlocksProvider(Stream inputStream, int internalBufferSize = 1024 * 1024)
@@ -36,11 +36,29 @@ namespace VeeamTestArchiver
                 if (count > 0)
                 {
                     _currentReadBlock++;
+                    _bytesProvided += count;
                     return new CompressionBlock(_currentReadBlock, block, count);
                 }
             }
 
             return null;
+        }
+
+        public long TotalBytes
+        {
+            get
+            {
+                // Не для всех потоков вернет то, что нужно, но цели академические.
+                return _inputStream.Length;
+            }
+        }
+
+        public long BytesProvided
+        {
+            get
+            {
+                return _bytesProvided;
+            }
         }
     }
 }
