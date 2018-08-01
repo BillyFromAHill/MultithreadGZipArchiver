@@ -79,6 +79,12 @@ namespace VeeamTestArchiver
                 return;
             }
 
+            if (new FileInfo(sourceFile).Length == 0)
+            {
+                Console.WriteLine(Properties.Resources.SourceFileIsEmptyMessage);
+                return;
+            }
+
             var gzipCompressor = new GZipCompressor(sourceFile);
 
             IArchiverStatistics stat;
@@ -90,7 +96,6 @@ namespace VeeamTestArchiver
             {
                 stat = gzipCompressor.Decompress(destFile);
             }
-
 
             while (!stat.IsDone)
             {

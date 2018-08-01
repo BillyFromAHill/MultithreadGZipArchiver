@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime;
 using System.Text;
 using System.Threading;
 
@@ -13,6 +14,9 @@ namespace VeeamTestArchiver
         // Заименовано как Stream,
         // поскольку без особых доработок может реализовывать полноценный поток,
         // что изначально задумывалось.
+
+        // По-варварски с памятью - много излишних выделений.
+        // Можно было бы соорудить "кучку", чтоб выделять пореже.
         private Stream _inputStream;
 
         private int _bufferSize = 1024 * 1024;
@@ -26,22 +30,30 @@ namespace VeeamTestArchiver
         private Queue<CompressionBlock> _readBlocks = new Queue<CompressionBlock>();
         private Queue<CompressionBlock> _blocksToWrite = new Queue<CompressionBlock>();
 
-        private AutoResetEvent _fullEvent = new AutoResetEvent(false);
-        private AutoResetEvent _getDataEvent = new AutoResetEvent(false);
-        private AutoResetEvent _writeReadyEvent = new AutoResetEvent(false);
+        private AutoResetEvent _onProcessedEvent = new AutoResetEvent(false);
+        private AutoResetEvent _onReadEvent = new AutoResetEvent(false);
+        private AutoResetEvent _onWriteQueryAddedEvent = new AutoResetEvent(false);
+        private AutoResetEvent _onWrittenEvent = new AutoResetEvent(false);
+
+        private const int SyncWaitMs = 500;
 
         private Thread _readerThread;
         private List<Thread> _compressionThreads;
         private Thread _writerThread;
 
+        private bool _working = false;
+
         private Dictionary<int, CompressionBlock> _blocks = new Dictionary<int, CompressionBlock>();
 
         private IBlocksProvider _blocksProvider;
 
+        // Костыль для распаковски в несколько потоков сжатого этой же утилитой.
         private bool _parallelDecompression = false;
 
         private GZipStream _decompressionStream = null;
         private MemoryStream _memoryToDecompress = null;
+
+        private Object _errorEventLock = new Object();
 
         public MultiThreadGZipStream(
             Stream inputStream,
@@ -65,10 +77,12 @@ namespace VeeamTestArchiver
             }
         }
 
+        public event EventHandler<EventArgs<Exception>> OnErrorOccured;
+
         public void CopyTo(Stream destStream)
         {
             _currentProcessedBlock = -1;
-
+            _working = true;
             _readerThread = new Thread(new ParameterizedThreadStart(ReaderWorker));
             _readerThread.Start(_inputStream);
 
@@ -99,31 +113,50 @@ namespace VeeamTestArchiver
             }
         }
 
-        private void ReaderWorker(Object stream)
+        private void RaiseErrorOccured(Exception ex)
         {
-            CompressionBlock block;
-            while ((block = _blocksProvider.GetNextBlock()) != null)
+            lock (_errorEventLock)
             {
-                lock (_readBlocks)
+                var handler = OnErrorOccured;
+                if (handler != null)
                 {
-                    _readBlocks.Enqueue(block);
-                    _getDataEvent.Set();
-                }
-
-                if (_readBlocks.Count >= _blockCacheSize)
-                {
-                    _fullEvent.WaitOne();
+                    handler(this, new EventArgs<Exception>(ex));
                 }
             }
+        }
 
-            _getDataEvent.Set();
+        private void ReaderWorker(Object stream)
+        {
+            try
+            {
+                CompressionBlock block;
+                while (_working && (block = _blocksProvider.GetNextBlock()) != null)
+                {
+                    lock (_readBlocks)
+                    {
+                        _readBlocks.Enqueue(block);
+                        _onReadEvent.Set();
+                    }
+
+                    if (_readBlocks.Count >= _blockCacheSize)
+                    {
+                        _onProcessedEvent.WaitOne(SyncWaitMs);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                RaiseErrorOccured(ex);
+            }
+
+            _onReadEvent.Set();
         }
 
         private CompressionBlock ReadBlock()
         {
             if (_readBlocks.Count <= _blockCacheSize / 2)
             {
-                _fullEvent.Set();
+                _onProcessedEvent.Set();
             }
 
             lock (_readBlocks)
@@ -141,13 +174,19 @@ namespace VeeamTestArchiver
         {
             while (_readerThread.IsAlive || _readBlocks.Count > 0)
             {
+                if (_blocksToWrite.Count > _blockCacheSize)
+                {
+                    _onWrittenEvent.WaitOne(SyncWaitMs);
+                    continue;
+                }
+
                 CompressionBlock currentBlock = ReadBlock();
 
                 if (currentBlock == null)
                 {
                     if (_readerThread.IsAlive)
                     {
-                        _getDataEvent.WaitOne(500);
+                        _onReadEvent.WaitOne(SyncWaitMs);
                     }
 
                     continue;
@@ -165,13 +204,21 @@ namespace VeeamTestArchiver
                     }
                     else
                     {
-                        GZipHeader header = new GZipHeader(currentBlock.Data);
-                        byte[] sizeData = header.GetExtra(1, 4);
-
-                        if (sizeData != null && BitConverter.ToInt32(sizeData, 0) > 0)
+                        try
                         {
-                            desiredThreadsCount = Environment.ProcessorCount;
-                            _parallelDecompression = true;
+                            GZipHeader header = new GZipHeader(currentBlock.Data);
+                            byte[] sizeData = header.GetExtra(
+                                CompressedBlocksProvider.VeeamArchiverSI1,
+                                CompressedBlocksProvider.VeeamArchiverSI2);
+                            if (sizeData != null && BitConverter.ToInt32(sizeData, 0) > 0)
+                            {
+                                desiredThreadsCount = Environment.ProcessorCount;
+                                _parallelDecompression = true;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            RaiseErrorOccured(ex);
                         }
                     }
 
@@ -183,13 +230,20 @@ namespace VeeamTestArchiver
                     }
                 }
 
-                if (_compressionMode == CompressionMode.Compress)
+                try
                 {
-                    Compress(currentBlock);
+                    if (_compressionMode == CompressionMode.Compress)
+                    {
+                        Compress(currentBlock);
+                    }
+                    else
+                    {
+                        Decompress(currentBlock);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Decompress(currentBlock);
+                    RaiseErrorOccured(ex);
                 }
             }
 
@@ -249,6 +303,8 @@ namespace VeeamTestArchiver
 
                     WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
                 }
+
+                _memoryToDecompress.Seek(0, SeekOrigin.Begin);
             }
         }
 
@@ -261,7 +317,6 @@ namespace VeeamTestArchiver
                     gzipStream.Write(block.Data, 0, block.EffectiveSize);
                 }
 
-
                 byte[] data = memoryStream.ToArray();
                 GZipHeader gZipHeader = new GZipHeader(data);
 
@@ -269,12 +324,18 @@ namespace VeeamTestArchiver
 
                 int size = 0;
                 // Добавляем поле с размером.
-                gZipHeader.SetExtra(1, 4, BitConverter.GetBytes(size));
+                gZipHeader.SetExtra(
+                    CompressedBlocksProvider.VeeamArchiverSI1,
+                    CompressedBlocksProvider.VeeamArchiverSI2,
+                    BitConverter.GetBytes(size));
 
                 // Устанавливаем конечный размер блока.
                 size = (int)(gZipHeader.Header.Length + data.Length - initialHeaderSize);
 
-                gZipHeader.SetExtra(1, 4, BitConverter.GetBytes(size));
+                gZipHeader.SetExtra(
+                    CompressedBlocksProvider.VeeamArchiverSI1,
+                    CompressedBlocksProvider.VeeamArchiverSI2,
+                    BitConverter.GetBytes(size));
 
                 byte[] resultBlock = new byte[size];
                 Array.Copy(gZipHeader.Header, resultBlock, gZipHeader.Header.Length);
@@ -292,9 +353,26 @@ namespace VeeamTestArchiver
                 {
                     if (_compressionThreads != null)
                     {
+                        _working = false;
+
+                        if (_readerThread != null &&
+                            !_readerThread.Join(SyncWaitMs))
+                        {
+                            _readerThread.Abort();
+                        }
+
                         foreach (var thread in _compressionThreads)
                         {
+                            if (!thread.Join(SyncWaitMs))
+                            {
+                                thread.Abort();
+                            }
+                        }
 
+                        if (_writerThread != null &&
+                            !_writerThread.Join(SyncWaitMs))
+                        {
+                            _writerThread.Abort();
                         }
                     }
                 }
@@ -329,6 +407,7 @@ namespace VeeamTestArchiver
                     if (block.BlockIndex - _currentProcessedBlock == 1)
                     {
                         stream.Write(block.Data, 0, block.EffectiveSize);
+                        _onWrittenEvent.Set();
                         _currentProcessedBlock++;
                     }
                     else
@@ -340,14 +419,15 @@ namespace VeeamTestArchiver
                 while (_blocks.ContainsKey(_currentProcessedBlock + 1))
                 {
                     CompressionBlock currentBlock = _blocks[_currentProcessedBlock + 1];
-                    _blocks.Remove(_currentProcessedBlock);
+                    _blocks.Remove(_currentProcessedBlock + 1);
                     stream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
+                    _onWrittenEvent.Set();
                     _currentProcessedBlock++;
                 }
 
                 if (block == null)
                 {
-                    _writeReadyEvent.WaitOne(500);
+                    _onWriteQueryAddedEvent.WaitOne(SyncWaitMs);
                 }
             }
         }
@@ -357,7 +437,7 @@ namespace VeeamTestArchiver
             lock(_blocksToWrite)
             {
                 _blocksToWrite.Enqueue(block);
-                _writeReadyEvent.Set();
+                _onWriteQueryAddedEvent.Set();
             }
         }
     }

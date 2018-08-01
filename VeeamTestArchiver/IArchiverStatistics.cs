@@ -10,5 +10,7 @@ namespace VeeamTestArchiver
         double PercentsDone { get; }
 
         bool IsDone { get; }
+
+        event EventHandler<EventArgs<Exception>> OnErrorOccured;
     }
 }

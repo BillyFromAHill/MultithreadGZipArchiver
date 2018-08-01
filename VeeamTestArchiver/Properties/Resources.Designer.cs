@@ -61,6 +61,15 @@ namespace VeeamTestArchiver.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Something wrong happened. You can see details in log.txt..
+        /// </summary>
+        internal static string ErrorOccuredMessage {
+            get {
+                return ResourceManager.GetString("ErrorOccuredMessage", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to 
         ///Parameters - compress/decompress [source file] [dest file].
         /// </summary>
@@ -85,6 +94,15 @@ namespace VeeamTestArchiver.Properties {
         internal static string SourceDoesNotExistMessage {
             get {
                 return ResourceManager.GetString("SourceDoesNotExistMessage", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Source file is empty..
+        /// </summary>
+        internal static string SourceFileIsEmptyMessage {
+            get {
+                return ResourceManager.GetString("SourceFileIsEmptyMessage", resourceCulture);
             }
         }
     }

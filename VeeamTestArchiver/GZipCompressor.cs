@@ -24,10 +24,10 @@ namespace VeeamTestArchiver
         public IArchiverStatistics Compress(string destinationPath)
         {
             MultiThreadGZipStream stream =
-                new MultiThreadGZipStream(
-                    File.OpenRead(_sourceFileName),
-                    CompressionMode.Compress);
-
+                    new MultiThreadGZipStream(
+                        File.OpenRead(_sourceFileName),
+                        CompressionMode.Compress);
+            stream.OnErrorOccured += Stat_ErrorOccured;
             stream.CopyTo(File.Create(destinationPath));
 
             return stream;
@@ -36,13 +36,23 @@ namespace VeeamTestArchiver
         public IArchiverStatistics Decompress(string destinationPath)
         {
             MultiThreadGZipStream stream =
-                new MultiThreadGZipStream(
-                    File.OpenRead(_sourceFileName),
-                    CompressionMode.Decompress);
+                    new MultiThreadGZipStream(
+                        File.OpenRead(_sourceFileName),
+                        CompressionMode.Decompress);
 
+            stream.OnErrorOccured += Stat_ErrorOccured;
             stream.CopyTo(File.Create(destinationPath));
-
             return stream;
+        }
+
+        private static void Stat_ErrorOccured(object sender, EventArgs<Exception> e)
+        {
+            Console.WriteLine(Properties.Resources.ErrorOccuredMessage);
+
+            using (TextWriter tsw = new StreamWriter(@"log.txt", true))
+            {
+                tsw.WriteLine(e.Args.ToString());
+            }
         }
     }
 }
