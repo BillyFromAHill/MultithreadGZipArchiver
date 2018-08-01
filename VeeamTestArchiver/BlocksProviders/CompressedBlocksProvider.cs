@@ -16,7 +16,7 @@ namespace VeeamTestArchiver
         // проявилось бы это только при чтении упакованного этой же утилитой файла и необходимость
         // реализации вычитывания до следующего заголовка все равно бы не отпала.
 
-        // Update: Не взлетело. Нужно писать дополнительный заголовок для параллельной распаковки.
+        // Update: Не взлетело. Нужно писать дополнительно в заголовок для параллельной распаковки.
         private Stream _gzippedStream;
         private Object _streamLock = new Object();
 
@@ -25,17 +25,11 @@ namespace VeeamTestArchiver
 
         private  int _internalBufferSize = 1024 * 1024;
 
-        private byte[] _currentInternalBlock = null;
-        private int _currentBlockRead = 0;
+        private bool _isBlocksDelimited = false;
 
-        // Байты ID используются как разделитель.
-        private int _currentInternalBlockPosition = 3;
-
-        private const byte GZipId1 = 0x1f;
-        private const byte GZipId2 = 0x8b;
-        private const byte GZipDeflate = 0x08;
-
-
+        // Идентификаторы дополнительного поля gzip для размера блока.
+        public static byte VeeamArchiverSI1 = 1;
+        public static byte VeeamArchiverSI2 = 4;
 
         public CompressedBlocksProvider(Stream gzippedStream, int internalBufferSize = 1024 * 1024)
         {
@@ -52,124 +46,89 @@ namespace VeeamTestArchiver
         {
             lock (_streamLock)
             {
-                if (_currentInternalBlock == null)
-                {
-                    _currentInternalBlock = new byte[_internalBufferSize];
-
-                    _currentBlockRead = _gzippedStream.Read(_currentInternalBlock, 0, _internalBufferSize);
-
-                    if (_currentBlockRead == 0)
-                    {
-                        return null;
-                    }
-
-                    if (_currentBlockRead > 2 && (_currentInternalBlock[0] != GZipId1 || _currentInternalBlock[1] != GZipId2))
-                    {
-                        throw new MissingFieldException("Ids are not found.");
-                    }
-                }
-
+                int readSize = _internalBufferSize;
+                GZipHeader header = null;
                 _currentBlockIndex++;
-                bool firstFound = false;
-                bool secondFound = false;
-                bool thirdFound = false;
+                byte[] resultBuffer;
+                int bytesRead = 0;
 
-
-                // Сжатый блок может быть, любого размера, в том числе, больше исходного.
-                var blocks = new List<byte[]>();
-
-                int firstBlockStart = _currentInternalBlockPosition;
-                int currentBlockStart = _currentInternalBlockPosition;
-                int lastBlockRead = _currentBlockRead;
-                byte[] currentBlock = _currentInternalBlock;
-
-                do
-                {
-                    _currentBlockRead = lastBlockRead;
-                    _currentInternalBlock = currentBlock;
-                    blocks.Add(_currentInternalBlock);
-                    for (int i = currentBlockStart; i < _currentBlockRead; i++)
-                    {
-                        if (secondFound && _currentInternalBlock[i] == GZipDeflate)
-                        {
-                            thirdFound = true;
-                            _currentInternalBlockPosition = i + 1;
-                            break;
-                        }
-
-                        secondFound = firstFound && _currentInternalBlock[i] == GZipId2;
-                        firstFound = _currentInternalBlock[i] == GZipId1;
-                    }
-
-                    if (thirdFound)
-                    {
-                        break;
-                    }
-
-                    currentBlockStart = 0;
-                    currentBlock = new byte[_internalBufferSize];
-                    lastBlockRead = _gzippedStream.Read(currentBlock, 0, _internalBufferSize);
-                }
-                while (lastBlockRead > 0);
-
-                if (!thirdFound)
-                {
-                    _currentInternalBlockPosition = _currentBlockRead + 2;
-                }
-
-                if (_currentInternalBlockPosition == firstBlockStart)
+                if (_gzippedStream.Position == _gzippedStream.Length)
                 {
                     return null;
                 }
 
-                long resultBlockSize =
-                    (blocks.Count - 1) * _internalBufferSize + _currentInternalBlockPosition - firstBlockStart;
-
-                byte[] resultBuffer = new byte[resultBlockSize];
-                int blockIndex = 0;
-                long placePosition = 3;
-                foreach (var block in blocks)
+                // Для первого буфера нужно вычитать заголовок, который гарантировано должен присутствовать.
+                // Дальше принимается решение о том, записан файл данной утилитой и можно вычитывать поблочно или
+                // блоки могут быть произвольными, поскольку границы блоков не выделить.
+                if (_currentBlockIndex == 0)
                 {
-                    long bytesToCopy = _internalBufferSize;
-                    long copyStart = 0;
+                    header = new GZipHeader(_gzippedStream);
 
-                    if (blockIndex == 0)
+                    byte[] sizeData = header.GetExtra(1, 4);
+                    if (sizeData != null && BitConverter.ToInt32(sizeData, 0) > 0)
                     {
-                        copyStart = firstBlockStart;
-                        bytesToCopy = _internalBufferSize - copyStart;
-                    }
+                        _isBlocksDelimited = true;
 
-                    // Начало сжатого куска в одном внутреннем блоке, конец - в другом.
-                    if (blockIndex == blocks.Count - 1)
+                        readSize = BitConverter.ToInt32(sizeData, 0);
+                        resultBuffer = new byte[readSize];
+                        Array.Copy(header.Header, resultBuffer, header.Header.Length);
+                        _gzippedStream.Read(
+                            resultBuffer,
+                            header.Header.Length,
+                            readSize - header.Header.Length);
+
+                        _bytesProvided += resultBuffer.Length;
+                        return new CompressionBlock(_currentBlockIndex, resultBuffer);
+                    }
+                    else
                     {
-                        if (blocks.Count == 1)
-                        {
-                            bytesToCopy = _currentInternalBlockPosition - 3 - firstBlockStart;
-                        }
-                        else
-                        {
-                            bytesToCopy = _currentInternalBlockPosition - 3;
-                        }
+                        resultBuffer = new byte[_internalBufferSize];
+                        Array.Copy(header.Header, resultBuffer, header.Header.Length);
+                        bytesRead = _gzippedStream.Read(
+                            resultBuffer,
+                            header.Header.Length,
+                            _internalBufferSize - header.Header.Length);
+
+                        _bytesProvided += bytesRead + header.Header.Length;
+                        return new CompressionBlock(
+                            _currentBlockIndex, resultBuffer, bytesRead + header.Header.Length );
                     }
-
-                    Array.Copy(
-                        block,
-                        copyStart,
-                        resultBuffer,
-                        placePosition,
-                        bytesToCopy);
-
-                    placePosition += bytesToCopy;
-
-                    blockIndex++;
                 }
 
-                resultBuffer[0] = GZipId1;
-                resultBuffer[1] = GZipId2;
-                resultBuffer[2] = GZipDeflate;
+                if (_isBlocksDelimited)
+                {
+                    header = new GZipHeader(_gzippedStream);
+                    byte[] sizeData = header.GetExtra(1, 4);
+                    if (sizeData != null && BitConverter.ToInt32(sizeData, 0) > 0)
+                    {
+                        readSize = BitConverter.ToInt32(sizeData, 0);
+                    }
 
-                _bytesProvided += resultBuffer.Length;
-                return new CompressionBlock(_currentBlockIndex, resultBuffer);
+                    resultBuffer = new byte[readSize];
+                    Array.Copy(header.Header, resultBuffer, header.Header.Length);
+                    _gzippedStream.Read(
+                        resultBuffer,
+                        header.Header.Length,
+                        readSize - header.Header.Length);
+
+                    bytesRead = readSize;
+                }
+                else
+                {
+                    resultBuffer = new byte[_internalBufferSize];
+                    bytesRead = _gzippedStream.Read(
+                        resultBuffer,
+                        0,
+                        _internalBufferSize);
+                }
+
+                if (bytesRead == 0)
+                {
+                    return null;
+                }
+
+                _bytesProvided += bytesRead;
+                return new CompressionBlock(_currentBlockIndex, resultBuffer, bytesRead);
             }
         }
 
