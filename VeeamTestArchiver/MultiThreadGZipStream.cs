@@ -19,7 +19,6 @@ namespace VeeamTestArchiver
         private bool _disposedValue;
         private int _currentProcessedBlock = -1;
 
-
         private CompressionMode _compressionMode;
 
         private int _blockCacheSize = Environment.ProcessorCount * 2;
@@ -29,7 +28,6 @@ namespace VeeamTestArchiver
 
         private AutoResetEvent _fullEvent = new AutoResetEvent(false);
         private AutoResetEvent _getDataEvent = new AutoResetEvent(false);
-
 
         private Thread _readerThread;
         private Thread[] _compressionThreads;
@@ -133,7 +131,6 @@ namespace VeeamTestArchiver
             return null;
         }
 
-
         private void CompressionWorker(Object stream)
         {
             while (_readerThread.IsAlive || _readBlocks.Count > 0)
@@ -148,15 +145,7 @@ namespace VeeamTestArchiver
 
                 if (_compressionMode == CompressionMode.Compress)
                 {
-                    using (var memoryStream = new MemoryStream(_bufferSize))
-                    {
-                        using (var gzipStream = new GZipStream(memoryStream, _compressionMode))
-                        {
-                            gzipStream.Write(currentBlock.Data, 0, currentBlock.EffectiveSize);
-                        }
-
-                        WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
-                    }
+                    Compress(currentBlock);
                 }
                 else
                 {
@@ -178,6 +167,38 @@ namespace VeeamTestArchiver
                         WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
                     }
                 }
+            }
+        }
+
+        private void Compress(CompressionBlock block)
+        {
+            using (var memoryStream = new MemoryStream(_bufferSize))
+            {
+                using (var gzipStream = new GZipStream(memoryStream, _compressionMode))
+                {
+                    gzipStream.Write(block.Data, 0, block.EffectiveSize);
+                }
+
+
+                byte[] data = memoryStream.ToArray();
+                GZipHeader gZipHeader = new GZipHeader(data);
+
+                int initialHeaderSize = gZipHeader.Header.Length;
+
+                int size = 0;
+                // Добавляем поле с размером.
+                gZipHeader.SetExtra(1, 4, BitConverter.GetBytes(size));
+
+                // Устанавливаем конечный размер блока.
+                size = (int)(gZipHeader.Header.Length + data.Length - initialHeaderSize);
+
+                gZipHeader.SetExtra(1, 4, BitConverter.GetBytes(size));
+
+                byte[] resultBlock = new byte[size];
+                Array.Copy(gZipHeader.Header, resultBlock, gZipHeader.Header.Length);
+                Array.Copy(data, initialHeaderSize, resultBlock, gZipHeader.Header.Length, data.Length - initialHeaderSize);
+
+                WriteBlock(new CompressionBlock(block.BlockIndex, resultBlock));
             }
         }
 

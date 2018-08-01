@@ -40,6 +40,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BlocksProviders\CompressedBlocksProvider.cs" />
+    <Compile Include="BlocksProviders\GZipHeader.cs" />
     <Compile Include="BlocksProviders\IBlocksProvider.cs" />
     <Compile Include="BlocksProviders\CompressionBlock.cs" />
     <Compile Include="GZipCompressor.cs" />
