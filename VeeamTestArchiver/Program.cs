@@ -112,6 +112,8 @@ namespace VeeamTestArchiver
                 UpdateProgress(stat);
                 Thread.Sleep(500);
             }
+
+            UpdateProgress(stat);
         }
 
         private static void UpdateProgress(Object statictics)
