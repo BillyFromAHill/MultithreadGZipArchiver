@@ -23,6 +23,8 @@ namespace VeeamTestArchiver
         private bool _disposedValue;
         private int _currentProcessedBlock = -1;
 
+        private int _processedIndex = 0;
+
         private CompressionMode _compressionMode;
 
         private int _blockCacheSize = Environment.ProcessorCount * 2;
@@ -105,6 +107,11 @@ namespace VeeamTestArchiver
             }
         }
 
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+
         public bool IsDone
         {
             get
@@ -122,6 +129,8 @@ namespace VeeamTestArchiver
                 {
                     handler(this, new EventArgs<Exception>(ex));
                 }
+
+                Stop();
             }
         }
 
@@ -277,34 +286,43 @@ namespace VeeamTestArchiver
                         }
                     }
 
-                    WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
+                    _processedIndex = currentBlock.BlockIndex;
+                    WriteBlock(new CompressionBlock(_processedIndex, memoryStream.ToArray()));
                 }
             }
             else
             {
                 if (_decompressionStream == null)
                 {
-                    _memoryToDecompress = new MemoryStream();
+                    _memoryToDecompress = new MemoryStream(new byte[currentBlock.Data.Length]);
 
                     _decompressionStream = new GZipStream(_memoryToDecompress, _compressionMode);
                 }
 
                 _memoryToDecompress.Write(currentBlock.Data, 0, currentBlock.Data.Length);
-                _memoryToDecompress.Seek(-currentBlock.Data.Length, SeekOrigin.End);
-                using (var memoryStream = new MemoryStream(_bufferSize))
-                {
-                    byte[] decompressedData = new byte[_bufferSize];
+                _memoryToDecompress.Seek(0, SeekOrigin.Begin);
 
-                    int nRead;
-                    while ((nRead = _decompressionStream.Read(decompressedData, 0, decompressedData.Length)) > 0)
+
+                while (true)
+                {
+                    if (_blocksToWrite.Count > _blockCacheSize)
                     {
-                        memoryStream.Write(decompressedData, 0, nRead);
+                        _onWrittenEvent.WaitOne(SyncWaitMs);
+                        continue;
                     }
 
-                    WriteBlock(new CompressionBlock(currentBlock.BlockIndex, memoryStream.ToArray()));
+                    byte[] decompressedData = new byte[_bufferSize];
+                    int nRead = _decompressionStream.Read(decompressedData, 0, decompressedData.Length);
+                    if (nRead == 0)
+                    {
+                        break;
+                    }
+
+                    WriteBlock(new CompressionBlock(_processedIndex, decompressedData, nRead));
+                    _processedIndex++;
                 }
 
-                _memoryToDecompress.Seek(0, SeekOrigin.Begin);
+                _memoryToDecompress.Position = 0;
             }
         }
 
@@ -341,7 +359,8 @@ namespace VeeamTestArchiver
                 Array.Copy(gZipHeader.Header, resultBlock, gZipHeader.Header.Length);
                 Array.Copy(data, initialHeaderSize, resultBlock, gZipHeader.Header.Length, data.Length - initialHeaderSize);
 
-                WriteBlock(new CompressionBlock(block.BlockIndex, resultBlock));
+                _processedIndex = block.BlockIndex;
+                WriteBlock(new CompressionBlock(_processedIndex, resultBlock));
             }
         }
 
@@ -353,27 +372,7 @@ namespace VeeamTestArchiver
                 {
                     if (_compressionThreads != null)
                     {
-                        _working = false;
-
-                        if (_readerThread != null &&
-                            !_readerThread.Join(SyncWaitMs))
-                        {
-                            _readerThread.Abort();
-                        }
-
-                        foreach (var thread in _compressionThreads)
-                        {
-                            if (!thread.Join(SyncWaitMs))
-                            {
-                                thread.Abort();
-                            }
-                        }
-
-                        if (_writerThread != null &&
-                            !_writerThread.Join(SyncWaitMs))
-                        {
-                            _writerThread.Abort();
-                        }
+                        Stop();
                     }
                 }
 
@@ -381,11 +380,30 @@ namespace VeeamTestArchiver
             }
         }
 
-        public void Dispose()
+        private void Stop()
         {
-            Dispose(true);
-        }
+            _working = false;
 
+            if (_readerThread != null &&
+                !_readerThread.Join(SyncWaitMs))
+            {
+                _readerThread.Abort();
+            }
+
+            foreach (var thread in _compressionThreads)
+            {
+                if (!thread.Join(SyncWaitMs))
+                {
+                    thread.Abort();
+                }
+            }
+
+            if (_writerThread != null &&
+                !_writerThread.Join(SyncWaitMs))
+            {
+                _writerThread.Abort();
+            }
+        }
 
         private void WriteWorker (Object streamObject)
         {
