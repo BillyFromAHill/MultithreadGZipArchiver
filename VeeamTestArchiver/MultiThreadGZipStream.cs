@@ -9,6 +9,9 @@ using System.Threading;
 
 namespace VeeamTestArchiver
 {
+    /// <summary>
+    /// Поток для упаковки/распаковки gzip.
+    /// </summary>
     public class MultiThreadGZipStream : IDisposable, IArchiverStatistics
     {
         // Заименовано как Stream,
@@ -57,6 +60,15 @@ namespace VeeamTestArchiver
 
         private Object _errorEventLock = new Object();
 
+        /// <summary>
+        /// Инициализирует новый экземпляр класса <see cref="MultiThreadGZipStream"/>
+        /// </summary>
+        /// <param name="inputStream">
+        /// Поток данных для упаковки/распаковки.
+        /// </param>
+        /// <param name="compressionMode">
+        /// Режим работы <see cref="CompressionMode"/>.
+        /// </param>
         public MultiThreadGZipStream(
             Stream inputStream,
             CompressionMode compressionMode)
@@ -79,8 +91,15 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <inheritdoc />
         public event EventHandler<EventArgs<Exception>> OnErrorOccured;
 
+        /// <summary>
+        /// Производит копирование данных с обработкой из исходного потока в указанный.
+        /// </summary>
+        /// <param name="destStream">
+        /// Поток для обработанных данных.
+        /// </param>
         public void CopyTo(Stream destStream)
         {
             _currentProcessedBlock = -1;
@@ -99,6 +118,7 @@ namespace VeeamTestArchiver
             _writerThread.Start(destStream);
         }
 
+        /// <inheritdoc />
         public double PercentsDone
         {
             get
@@ -107,11 +127,13 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <inheritdoc />
         public void Dispose()
         {
             Dispose(true);
         }
 
+        /// <inheritdoc />
         public bool IsDone
         {
             get

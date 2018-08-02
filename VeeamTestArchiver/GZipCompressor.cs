@@ -7,10 +7,19 @@ using System.Text;
 
 namespace VeeamTestArchiver
 {
+    /// <summary>
+    /// Компрессор файлов GZip.
+    /// </summary>
     public class GZipCompressor
     {
         private string _sourceFileName;
 
+        /// <summary>
+        /// Инициализирует новый экземпляр класса <see cref="GZipCompressor"/>
+        /// </summary>
+        /// <param name="filename">
+        /// Имя исходного файла.
+        /// </param>
         public GZipCompressor(string filename)
         {
             if (string.IsNullOrEmpty(filename))
@@ -18,41 +27,79 @@ namespace VeeamTestArchiver
                 throw new ArgumentNullException("fileName");
             }
 
+            // Здесь по заголовку можно дополнительно определять сжат ли уже.
             _sourceFileName = filename;
         }
 
+        /// <summary>
+        /// Сжимает исходный файл в файл с указанным путем.
+        /// </summary>
+        /// <param name="destinationPath">
+        /// Путь для сжатия.
+        /// </param>
+        /// <returns>
+        /// Возвращает интерфейс доступа к статистике процесса <see cref="IArchiverStatistics"/>.
+        /// </returns>
+        /// <remarks>
+        /// Сразу же возвращает управление. Работает в фоне.
+        /// </remarks>
         public IArchiverStatistics Compress(string destinationPath)
         {
-            MultiThreadGZipStream stream =
-                    new MultiThreadGZipStream(
-                        File.OpenRead(_sourceFileName),
-                        CompressionMode.Compress);
-            stream.OnErrorOccured += Stat_ErrorOccured;
-            stream.CopyTo(File.Create(destinationPath));
-
-            return stream;
+            return GetStream(CompressionMode.Compress, destinationPath);
         }
 
+        /// <summary>
+        /// Распаковывает исходный файл в файл с указанным путем.
+        /// </summary>
+        /// <param name="destinationPath">
+        /// Путь для распаковке.
+        /// </param>
+        /// <returns>
+        /// Возвращает интерфейс доступа к статистике процесса <see cref="IArchiverStatistics"/>.
+        /// </returns>
+        /// <remarks>
+        /// Сразу же возвращает управление. Работает в фоне.
+        /// </remarks>
         public IArchiverStatistics Decompress(string destinationPath)
         {
-            MultiThreadGZipStream stream =
-                    new MultiThreadGZipStream(
-                        File.OpenRead(_sourceFileName),
-                        CompressionMode.Decompress);
+            return GetStream(CompressionMode.Decompress, destinationPath);
+        }
 
-            stream.OnErrorOccured += Stat_ErrorOccured;
-            stream.CopyTo(File.Create(destinationPath));
+        private IArchiverStatistics GetStream(CompressionMode compressionMode, string fileName)
+        {
+            MultiThreadGZipStream stream = null;
+            try
+            {
+                stream = new MultiThreadGZipStream(
+                    File.OpenRead(_sourceFileName),
+                    compressionMode);
+
+                stream.OnErrorOccured += Stat_ErrorOccured;
+                stream.CopyTo(File.Create(fileName));
+            }
+            catch (Exception ex)
+            {
+                stream.Dispose();
+                stream = null;
+                LogError(ex);
+            }
+
             return stream;
         }
 
-        private static void Stat_ErrorOccured(object sender, EventArgs<Exception> e)
+        private static void LogError(Exception ex)
         {
             Console.WriteLine(Properties.Resources.ErrorOccuredMessage);
 
             using (TextWriter tsw = new StreamWriter(@"log.txt", true))
             {
-                tsw.WriteLine(e.Args.ToString());
+                tsw.WriteLine(ex.ToString());
             }
+        }
+
+        private static void Stat_ErrorOccured(object sender, EventArgs<Exception> e)
+        {
+            LogError(e.Args);
         }
     }
 }

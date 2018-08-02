@@ -7,6 +7,9 @@ using System.Text;
 
 namespace VeeamTestArchiver
 {
+    /// <summary>
+    /// Провайдер исходных (несжатых) блоков.
+    /// </summary>
     internal class InitialBlocksProvider : IBlocksProvider
     {
         private Stream _inputStream;
@@ -15,6 +18,15 @@ namespace VeeamTestArchiver
         private long _bytesProvided = 0;
         private Object _readLock = new Object();
 
+        /// <summary>
+        /// Инициализирует новый экземпляр класса <see cref="InitialBlocksProvider"/>
+        /// </summary>
+        /// <param name="inputStream">
+        /// Поток данных.
+        /// </param>
+        /// <param name="internalBufferSize">
+        /// Размер буфера для чтения.
+        /// </param>
         public InitialBlocksProvider(Stream inputStream, int internalBufferSize = 1024 * 1024)
         {
             if (inputStream == null)
@@ -26,6 +38,7 @@ namespace VeeamTestArchiver
             _inputStream = inputStream;
         }
 
+        /// <inheritdoc />
         public CompressionBlock GetNextBlock()
         {
             var block = new byte[_bufferSize];
@@ -44,6 +57,7 @@ namespace VeeamTestArchiver
             return null;
         }
 
+        /// <inheritdoc />
         public long TotalBytes
         {
             get
@@ -53,6 +67,7 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <inheritdoc />
         public long BytesProvided
         {
             get

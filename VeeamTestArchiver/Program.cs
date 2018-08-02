@@ -87,14 +87,24 @@ namespace VeeamTestArchiver
 
             var gzipCompressor = new GZipCompressor(sourceFile);
 
-            IArchiverStatistics stat;
+            IArchiverStatistics stat = null;
             if (command.Equals(CompressCommand))
             {
                 stat = gzipCompressor.Compress(destFile);
+
+                if (stat == null)
+                {
+                    return;
+                }
             }
             else
             {
                 stat = gzipCompressor.Decompress(destFile);
+
+                if (stat == null)
+                {
+                    return;
+                }
             }
 
             while (!stat.IsDone)

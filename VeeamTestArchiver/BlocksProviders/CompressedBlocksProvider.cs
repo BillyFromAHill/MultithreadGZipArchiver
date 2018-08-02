@@ -7,6 +7,9 @@ using System.Text;
 
 namespace VeeamTestArchiver
 {
+    /// <summary>
+    /// Поставщик сжатых блоков. 
+    /// </summary>
     internal class CompressedBlocksProvider : IBlocksProvider
     {
         // Чтение выделено в объекты, поскольку внутри может быть реализовано чтение файла в несколько потоков,
@@ -27,10 +30,25 @@ namespace VeeamTestArchiver
 
         private bool _isBlocksDelimited = false;
 
-        // Идентификаторы дополнительного поля gzip для размера блока.
+        /// <summary>
+        /// Идентификатор дополнительного поля gzip SI1.
+        /// </summary>
         public static byte VeeamArchiverSI1 = 1;
+
+        /// <summary>
+        /// Идентификатор дополнительного поля gzip SI2.
+        /// </summary>
         public static byte VeeamArchiverSI2 = 4;
 
+        /// <summary>
+        /// Инициализирует новый экзепляр класса <see cref="CompressedBlocksProvider"/>
+        /// </summary>
+        /// <param name="gzippedStream">
+        /// Поток для вычитывания блоков.
+        /// </param>
+        /// <param name="internalBufferSize">
+        /// Размер внутреннего буфера для вычитывания.
+        /// </param>
         public CompressedBlocksProvider(Stream gzippedStream, int internalBufferSize = 1024 * 1024)
         {
             if (gzippedStream == null)
@@ -42,6 +60,7 @@ namespace VeeamTestArchiver
             _gzippedStream = gzippedStream;
         }
 
+        /// <inheritdoc />
         public CompressionBlock GetNextBlock()
         {
             lock (_streamLock)
@@ -132,6 +151,7 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <inheritdoc />
         public long TotalBytes
         {
             get
@@ -141,6 +161,7 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <inheritdoc />
         public long BytesProvided
         {
             get

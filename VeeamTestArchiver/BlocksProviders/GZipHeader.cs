@@ -6,6 +6,9 @@ using System.Text;
 
 namespace VeeamTestArchiver
 {
+    /// <summary>
+    /// Парсер заголовка GZip.
+    /// </summary>
     internal class GZipHeader
     {
         private byte[] _data;
@@ -14,6 +17,12 @@ namespace VeeamTestArchiver
         private const byte GZipId2 = 0x8b;
         private const byte GZipDeflate = 0x08;
 
+        /// <summary>
+        /// Инициализирует новый экземпляр класса <see cref="CompressionBlock"/>
+        /// </summary>
+        /// <param name="gzipStream">
+        /// Поток gzip.
+        /// </param>
         public GZipHeader(Stream gzipStream)
         {
             if (gzipStream == null)
@@ -30,7 +39,7 @@ namespace VeeamTestArchiver
                 initialBlock[1] != GZipId2 ||
                 initialBlock[2] != GZipDeflate)
             {
-                // В этом месте, в случае неправильного заголовка, вычитанные данные из потока пропадут.
+                // В этом месте, в случае неправильного заголовка, вычитанные из потока данные, пропадут.
                 throw new ArgumentException("Wrong gzip header.");
             }
 
@@ -57,6 +66,9 @@ namespace VeeamTestArchiver
             gzipStream.Read(_data, initialBlock.Length + sizeof(Int16), extraSize);
         }
 
+        /// <summary>
+        /// Вычитанный заголовок.
+        /// </summary>
         public byte[] Header
         {
             get
@@ -65,6 +77,12 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <summary>
+        /// Инициализирует новый экземпляр класса <see cref="CompressionBlock"/>
+        /// </summary>
+        /// <param name="gzipBlock">
+        /// Массив, содержащий gzip.
+        /// </param>
         public GZipHeader(byte[] gzipBlock)
         {
             if (gzipBlock == null)
@@ -96,6 +114,18 @@ namespace VeeamTestArchiver
             Array.Copy(gzipBlock, 0, _data, 0, headerSize);
         }
 
+        /// <summary>
+        /// Устанавливает дополнительное поле в заголовок.
+        /// </summary>
+        /// <param name="s1">
+        /// Первый байт идентификатора поля.
+        /// </param>
+        /// <param name="s2">
+        /// Второй байт идентификатора поля.
+        /// </param>
+        /// <param name="value">
+        /// Данные.
+        /// </param>
         public void SetExtra(byte s1, byte s2, byte[] value)
         {
             byte[] extra = GetExtra(s1, s2);
@@ -160,6 +190,18 @@ namespace VeeamTestArchiver
             }
         }
 
+        /// <summary>
+        /// Получает дополнительные данные по идентификаторам.
+        /// </summary>
+        /// <param name="s1">
+        /// Первый байт идентификатора поля.
+        /// </param>
+        /// <param name="s2">
+        /// Второй байт идентификатора поля.
+        /// </param>
+        /// <returns>
+        /// Возвращает дополнительные данные или null, в случае их отсутствия.
+        /// </returns>
         public byte[] GetExtra(byte s1, byte s2)
         {
             int dataPosition = GetExtraPostion(s1, s2);
